@@ -1,0 +1,51 @@
+# Prerequisites
+*.d
+*.mat
+
+# Compiled Object files
+*.slo
+*.lo
+*.o
+
+# Precompiled Headers
+*.gch
+*.pch
+
+# Compiled Dynamic libraries
+*.so
+*.dylib
+*.dll
+
+# Fortran module files
+*.mod
+*.smod
+
+# Compiled Static libraries
+*.lai
+*.la
+*.a
+*.lib
+
+# Executables
+*.out
+*.app
+
+# Floders
+.vs/
+x64/
+TestData/
+DataSet/
+DataGen/
+Results/
+runs/
+.vscode/
+__pycache__
+validationRes/
+Results/
+
+GCNDenoiser/*.obj
+
+# Configure files
+*.vcxproj
+*.vcxproj.filters
+*.vcxproj.user
