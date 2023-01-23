@@ -30,6 +30,16 @@
 *.out
 *.app
 
+# GCNDenoiser files
+GCNDenoiser/*.obj
+GCNDenoiser/*.t7
+
+# Settings files
+*.ini
+
+# Trained model files
+*.pt
+
 # Floders
 .vs/
 x64/
@@ -42,8 +52,7 @@ runs/
 __pycache__
 validationRes/
 Results/
-
-GCNDenoiser/*.obj
+src/
 
 # Configure files
 *.vcxproj
