@@ -1,5 +1,4 @@
 import os
-import math
 import time
 
 import h5py
@@ -25,7 +24,7 @@ def test():
     dgcnn = DGCNN(8, 17, 1024, 0.5)
     # dgcnn = torch.nn.DataParallel(dgcnn)
     dgcnn.load_state_dict(torch.load(k_opt.current_model))
-    print(str(time.time()) + " Load ", k_opt.current_model, " Success!")
+    print("Load ", k_opt.current_model, " Success!")
     dgcnn.cuda()
     dgcnn.eval()
 
@@ -68,7 +67,7 @@ def test():
         val_cos_loss.append(cos_loss.data.item())
         val_value_loss.append(value_loss.data.item())
 
-        print(str(time.time()) + " Val Batch: %d/%d, || cos loss: %.7f, || value loss: %.7f" % \
+        print("Val Batch: %d/%d, || cos loss: %.7f, || value loss: %.7f" % \
                 (i_test + 1, k_opt.num_val_batch, cos_loss.data.item(), value_loss.data.item()))
 
 if __name__ == '__main__':

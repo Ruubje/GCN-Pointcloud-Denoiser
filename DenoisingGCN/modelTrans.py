@@ -1,7 +1,7 @@
 import torch
 from GCNModel import DGCNN
 
-k_current_model = "checkpoints/23_model.t7"
+k_current_model = "DenoisingGCN/checkpoints/23_model.t7"
 
 dgcnn = DGCNN(8, 17, 1024, 0.5, 3)
 
