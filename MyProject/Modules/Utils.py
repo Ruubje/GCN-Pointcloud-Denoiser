@@ -3,8 +3,6 @@ import polyscope as ps
 import numpy as np
 import meshplot as mp
 
-import timeit
-
 # This class contains methods to manipulate a mesh with vertices and faces.
 class Mesh:
     # Initialize the mesh object.
