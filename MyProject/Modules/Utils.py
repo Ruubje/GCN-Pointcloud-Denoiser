@@ -2,6 +2,7 @@ import igl
 import polyscope as ps
 import numpy as np
 import meshplot as mp
+import copy
 
 # This class contains methods to manipulate a mesh with vertices and faces.
 class Mesh:
@@ -81,12 +82,12 @@ class Mesh:
     # Creates a copy of the current mesh. Can be used for debugging purposes.
     # Returns a new Mesh object that is a copy of the current object.
     def copy(self):
-        v_copy = np.copy(self.v)
-        f_copy = np.copy(self.f)
-        n_copy = None if self.n is None else np.copy(self.n)
-        f2f_copy = None if self.f2f is None else np.copy(self.f2f)
-        pi_copy = None if self.pi is None else np.copy(self.pi)
-        vta_copy = self.vta
+        v_copy = copy.deepcopy(self.v)
+        f_copy = copy.deepcopy(self.f)
+        n_copy = None if self.n is None else copy.deepcopy(self.n)
+        f2f_copy = None if self.f2f is None else copy.deepcopy(self.f2f)
+        pi_copy = None if self.pi is None else copy.deepcopy(self.pi)
+        vta_copy = None if self.vta is None else copy.deepcopy(self.vta)
         return Mesh(v_copy, f_copy, n_copy, f2f_copy, pi_copy, vta_copy)
 
     """
@@ -143,6 +144,9 @@ class Mesh:
     # ring is a number (n) representing the size of the neighbourhood that needs to be returned.
     # Returns an array containing all faces within the n-ring neighbourhood.
     def getNeighbourhood(self, face_index, ring):
+        if ring < 1:
+            return np.array([])
+        
         adjecancy = self.f2f if not (self.f2f is None) else igl.triangle_triangle_adjacency(self.f)[0]
         self.f2f = adjecancy
 
@@ -185,6 +189,9 @@ class Mesh:
         triangles = vta[0][vta[1][v]:vta[1][v+1]]
         return triangles
     
+    # Get the triangles that are connected to the given vertex indices.
+    # vs is an array with vertex indices for which neighbouring triangles need to be found.
+    # Returns an array of face indices that are connected to one of the given vertices.
     def getTrianglesOfVertices(self, vs):
         vta = self.getVertexTriangleAdjacency()
         start = vta[1][vs]
@@ -206,8 +213,6 @@ class Mesh:
     # translation is an 3x1 array representing the relative distance to move the mesh.
     # Returns the object itself
     def translate(self, translation):
-        assert type(translation) == np.ndarray, "Translation should be a numpy array"
-        assert translation.shape == (3,), f"Translation should be a 3 by 1 array, but is a {translation.shape} array"
         self.v += np.tile(translation, (self.v.shape[0], 1))
         return self
 
@@ -215,7 +220,6 @@ class Mesh:
     # size is the target size to scale to.
     # Returns the object itself.
     def resize(self, size):
-        assert type(size) == "float"
         center = self.getPCCenter()
         self.translate(-center)
         self.v = self.v/np.max(np.linalg.norm(self.v, axis=1))*size
@@ -226,13 +230,11 @@ class Mesh:
     # rotationMatrix is a 3x3 array representing a rotation matrix.
     # Returns the object itself.
     def rotate(self, rotationMatrix):
-        assert type(rotationMatrix) == np.ndarray and rotationMatrix.shape == (3, 3), "Rotation matrix is not a 3 by 3 matrix"
         center = self.getPCCenter()
         self.translate(-center)
         rotated_v = np.dot(rotationMatrix, self.v.T).T
         self.v = rotated_v
         self.translate(center)
-        assert np.linalg.norm(center - self.getPCCenter()) < 0.001, f"Center of mesh was not the same after rotation, but shifted by {self.getPCCenter() - center}"
         return self
 
     """
