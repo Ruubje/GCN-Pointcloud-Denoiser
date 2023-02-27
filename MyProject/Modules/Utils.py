@@ -106,7 +106,7 @@ class Mesh:
     # Returns 3x1 array, center of the mesh.
     def getPCSize(self):
         center = self.getPCCenter()
-        return np.max(np.linalg.norm(self.v - np.tile(center, (self.v.shape[0], 1)), axis=0))
+        return np.max(np.linalg.norm(self.v - np.tile(center, (self.v.shape[0], 1)), axis=1))
     
     # Calculates the bounding size in which the Mesh perfectly fits.
     # Returns 3x1 array containing the size of the bounding box.
@@ -218,7 +218,7 @@ class Mesh:
         assert type(size) == "float"
         center = self.getPCCenter()
         self.translate(-center)
-        self.v = self.v/np.max(np.linalg.norm(self.v, axis=0))*size
+        self.v = self.v/np.max(np.linalg.norm(self.v, axis=1))*size
         self.translate(center)
         return self
 
