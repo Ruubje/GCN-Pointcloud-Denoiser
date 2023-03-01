@@ -151,7 +151,7 @@ def test_getTrianglesOfVertices(myMesh):
     expected_result = np.array([0, 1, 4, 5, 6, 7])
     assert np.all(triangles == expected_result)
 
-def test_translate_(myMesh):
+def test_translate(myMesh):
     translation = np.array([0.5, 2.5, 1.3])
     old_v = np.copy(myMesh.v)
     size = myMesh.getPCSize()
@@ -194,3 +194,26 @@ def test_rotate(myMesh):
     myMesh.rotate(rotation)
 
     assert np.all(myMesh.v == expected_result)
+
+def test_rotate_Normals(myMesh):
+    rotation = np.array([
+        [1, 0, 0],
+        [0, 0, -1],
+        [0, 1, 0]
+    ])
+    _ = myMesh.getFaceNormals()
+    sqrt1div3 = np.sqrt(1/3)
+    expected_result = np.array([
+        [sqrt1div3, -sqrt1div3, sqrt1div3],
+        [sqrt1div3, sqrt1div3, sqrt1div3],
+        [sqrt1div3, sqrt1div3, -sqrt1div3],
+        [-sqrt1div3, sqrt1div3, -sqrt1div3],
+        [-sqrt1div3, -sqrt1div3, -sqrt1div3],
+        [-sqrt1div3, -sqrt1div3, sqrt1div3],
+        [sqrt1div3, -sqrt1div3, -sqrt1div3],
+        [-sqrt1div3, sqrt1div3, sqrt1div3]
+    ], dtype=np.float32)
+
+    myMesh.rotate(rotation)
+
+    assert np.all(myMesh.n == expected_result)

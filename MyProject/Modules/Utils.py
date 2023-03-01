@@ -13,13 +13,11 @@ class Mesh:
     # fn is a list of indices connecting vertices to create a face normal???
     # f2f is a map created by igl showing which face is neighbouring which face.
     #   It is only initialized if neighbour look ups are needed.
-    # pi wil be set to an index pointing to the face that was selected, which created the current patch.
-    def __init__(self, v, f, n = None, f2f = None, pi = None, vta = None):
+    def __init__(self, v, f, n = None, f2f = None, vta = None):
         self.v = v
         self.f = f
         self.n = n
         self.f2f = f2f
-        self.pi = pi
         self.vta = vta
 
     """
@@ -73,12 +71,24 @@ class Mesh:
     # faceIds is an array containing face indices to include in the new Mesh.
     # Returns newMesh is the new Mesh object
     #         imv is a map that points the old vertex index to the new vertex index.
-    def select_faces(self, faceIds):
+    def createPatch(self, faceIds, old_fi):
         nv, nf, imv, _ = igl.remove_unreferenced(self.v, self.f[faceIds])
-        newMesh = Mesh(nv, nf)
-        return newMesh, imv
+        new_fi = self.getNewFaceIndex(old_fi, nf, imv)
+        newMesh = Patch(self, new_fi, nv, nf)
+        return newMesh
 
-    
+    # Gets the new index of a face after patch selection of a given old face index.
+    # old_fi is the old face index.
+    # imv is the old to new vertex map that is used to calculate the new face index.
+    # Returns the new face index
+    def getNewFaceIndex(self, old_fi, nf, imv):
+        old_vertices_of_face = self.f[old_fi]
+        new_vertices_of_face = imv[old_vertices_of_face]
+        mask_where_new_vertices_are_equal_to_new_vertices_of_face = np.equal(nf, new_vertices_of_face)
+        mask_where_all_vertices_are_equal = np.all(mask_where_new_vertices_are_equal_to_new_vertices_of_face, axis=1)
+        resulting_index = np.arange(len(nf))[mask_where_all_vertices_are_equal]
+        return resulting_index
+
     # Creates a copy of the current mesh. Can be used for debugging purposes.
     # Returns a new Mesh object that is a copy of the current object.
     def copy(self):
@@ -86,9 +96,8 @@ class Mesh:
         f_copy = copy.deepcopy(self.f)
         n_copy = None if self.n is None else copy.deepcopy(self.n)
         f2f_copy = None if self.f2f is None else copy.deepcopy(self.f2f)
-        pi_copy = None if self.pi is None else copy.deepcopy(self.pi)
         vta_copy = None if self.vta is None else copy.deepcopy(self.vta)
-        return Mesh(v_copy, f_copy, n_copy, f2f_copy, pi_copy, vta_copy)
+        return Mesh(v_copy, f_copy, n_copy, f2f_copy, vta_copy)
 
     """
     Get methods
@@ -234,6 +243,9 @@ class Mesh:
         self.translate(-center)
         rotated_v = np.dot(rotationMatrix, self.v.T).T
         self.v = rotated_v
+        if not (self.n is None):
+            rotated_n = np.dot(rotationMatrix, self.n.T).T
+            self.n = rotated_n
         self.translate(center)
         return self
 
@@ -249,6 +261,87 @@ class Mesh:
     # Visualizes the mesh a mesh using meshplot.
     def mpShowMesh(self):
         mp.plot(self.v, self.f, shading={"wireframe": True})
+
+# A patch is a part of a Mesh that is selected to do further calculations on.
+class Patch(Mesh):
+
+    # Initialize the patch.
+    # pi is the patch index, representing an index pointing to a face from which the patch was created.
+    def __init__(self, parent, pi, *args):
+        super().__init__(*args)
+        self.parent = parent
+        self.pi = pi
+        
+    
+    # Creates a copy of the current patch. Can be used for debugging purposes.
+    # Returns a new Patch object that is a copy of the current object.
+    def copy(self):
+        v_copy = copy.deepcopy(self.v)
+        f_copy = copy.deepcopy(self.f)
+        n_copy = None if self.n is None else copy.deepcopy(self.n)
+        f2f_copy = None if self.f2f is None else copy.deepcopy(self.f2f)
+        vta_copy = None if self.vta is None else copy.deepcopy(self.vta)
+        new_patch = Patch(self.parent, self.pi, v_copy, f_copy, n_copy, f2f_copy, vta_copy)
+        return new_patch
+    
+    # Transforms / Aligns the patch as described in the paper.
+    def alignPatch(self):
+        self.translate(-1*self.getPCCenter())
+        self.resize(self.getPCSize() / np.max(self.getPCBoundingBox()))
+        rotationMatrix = self.getPaperRotationMatrix().matrix
+        self.rotate(rotationMatrix)
+    
+    # Get the rotation matrix for this patch. The algorithm for defining the matrix is described in the paper.
+    # Returns a 3x3 array containing the rotation matrix.
+    def getPaperRotationMatrix(self):
+        rotation = RotationMatrix(self)
+        return rotation
+
+# A class that can handle all method and algorithms that are relevant to rotatino matrices.
+class RotationMatrix():
+    
+    # Get the rotation matrix for this patch. The algorithm for defining the matrix is described in the paper.
+    # Returns a 3x3 array containing the rotation matrix.
+    def __init__(self, patch):
+        # Can only execute if attribute pi is set with a face id.
+        self.bcs = igl.barycenter(patch.v, patch.f)
+        self.ci = self.bcs[patch.pi]
+        self.cj = np.delete(self.bcs, patch.pi, axis=0)
+        self.dcs = self.cj - self.ci
+        self.nj = np.delete(patch.getFaceNormals(), patch.pi, axis=0)
+        self.raw_wj = np.cross(np.cross(self.dcs, self.nj, axis=1), self.dcs)
+        self.wj = np.nan_to_num(self.raw_wj / np.linalg.norm(self.raw_wj, axis=1, keepdims=True))
+        self.njprime = 2 * np.sum(np.multiply(self.nj, self.wj), axis=1)[:, None] * self.wj - self.nj
+        self.areas = patch.getAreas(np.delete(np.arange(len(patch.f)), patch.pi, axis=0))
+        self.maxArea = np.max(self.areas)
+        self.ddcs = np.linalg.norm(self.dcs, axis=1)
+        # This sigma should be changed in the future maybe! This is the best guess for what sigma should be currently..
+        self.sigma = 1./3.
+        self.muj = (self.areas / self.maxArea)*np.exp(-self.ddcs/self.sigma)
+        self.outer = self.njprime[..., None] * self.njprime[:, None]
+        self.Tj = self.muj[:, None, None] * self.outer
+        self.Ti = np.sum(self.Tj, axis=0)
+        self.eig = np.linalg.eig(self.Ti)
+        self.sort = np.flip(np.argsort(self.eig[0]))
+        self.matrix = self.eig[1].T[self.sort]
+        if np.linalg.det(self.matrix) < 0:
+            self.matrix[2, :] *= -1
+    
+    # Produce a random rotation matrix. Specifically used by tests to test the methods.
+    # Returns a 3 by 3 matrix representing a random rotation.
+    @classmethod
+    def getRandomRotationMatrix(cls):
+        random_locations = np.random.normal(size=(3, 3))
+        normalized = random_locations / np.linalg.norm(random_locations, axis=1)[:, None]
+        proj_1_on_0 = np.dot(normalized[1], normalized[0])*normalized[0]
+        second_axis = normalized[1] - proj_1_on_0
+        normalized_1 = second_axis / np.linalg.norm(second_axis)
+        proj_2_on_0 = np.dot(normalized[2], normalized[0])*normalized[0]
+        proj_2_on_1 = np.dot(normalized[2], normalized_1)*normalized_1
+        third_axis = normalized[2] - proj_2_on_0 - proj_2_on_1
+        normalized_2 = third_axis / np.linalg.norm(third_axis)
+        rotation = np.stack([normalized[0], normalized_1, normalized_2])
+        return rotation
 
 def psViewPC(v):
     ps.init()
