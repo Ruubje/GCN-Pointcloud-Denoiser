@@ -92,11 +92,15 @@ class MatrixDataset(Tdata.Dataset):
 def preDataPath(folder_list):
     all_file_list = []
     for i in range(len(folder_list)):
-        file_list = os.listdir(k_data_path + folder_list[i])
+        folder_path = k_data_path + folder_list[i]
+        if os.path.isfile(folder_path):
+            print(f"Skipped {folder_path}, because it was a file instead of a folder (model with data)")
+            continue
+        file_list = os.listdir(folder_path)
         for j in range(len(file_list)):
             if(file_list[j][0] == '9'):
                 continue
-            file_list[j] = k_data_path + folder_list[i] + '/' + file_list[j]
+            file_list[j] = folder_path + '/' + file_list[j]
             all_file_list.append(file_list[j])
 
     return all_file_list

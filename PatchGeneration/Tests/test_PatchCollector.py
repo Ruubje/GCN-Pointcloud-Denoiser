@@ -1,11 +1,12 @@
 import pytest
-from Modules.Utils import *
+from Modules.Mesh import *
 from Modules.PatchCollector import *
+from Modules.RotationMatrix import *
 import numpy as np
 import igl
 
 @pytest.fixture
-def myPatch():
+def myPatchCollector():
     v = np.array([
         [0, 0, 1],
         [0, 1, 0],
@@ -26,18 +27,6 @@ def myPatch():
     ])
     return PatchCollector(Mesh(v, f))
 
-def test_selectPaperPatch(myPatch):
+def test_selectPaperPatch(myPatchCollector):
     # tba
     return
-
-def test_alignPatch_check_vertices(myPatch):
-    patch = myPatch.selectPaperPatch(0)
-    myPatch.mesh = patch
-    copy = PatchCollector(patch.copy())
-    randomRotation = getRandomRotationMatrix()
-    copy.mesh.rotate(randomRotation)
-
-    myPatch.alignPatch(myPatch.mesh)
-    copy.alignPatch(copy.mesh)
-
-    assert np.allclose(myPatch.mesh.v, copy.mesh.v)

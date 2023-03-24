@@ -34,6 +34,10 @@ def splitData(data_path, num_val_batch):
     num_val_data = num_val_batch * k_opt.batch_size
     num_train_data = num_data - num_val_data
 
+    if num_train_data <= 0:
+        print(f"Number of training samples is calculated to be {num_train_data}.\nChange the Batch Size or Number of Validation Batches to be reasonable for the {len(data_path)} given samples.")
+        return
+    
     val_index = random.sample(range(0, num_data), num_val_data)
     train_index = list(set(range(0, num_data)) - set(val_index))
 

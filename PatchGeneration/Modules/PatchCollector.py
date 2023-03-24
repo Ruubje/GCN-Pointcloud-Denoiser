@@ -1,6 +1,6 @@
 import igl
 import numpy as np
-from Modules.Utils import Mesh
+from Modules.Mesh import Mesh
 import meshplot as mp
 
 # PatchCollector is a class that creates and keeps track of patches from a mesh.

@@ -1,5 +1,6 @@
 import pytest
-from Modules.Utils import *
+from Modules.Mesh import *
+from Modules.RotationMatrix import *
 import numpy as np
 import igl
 
@@ -25,6 +26,15 @@ def myMesh():
     ])
     return Mesh(v, f)
 
+@pytest.fixture
+def myPatch(myMesh):
+    parent = myMesh
+    PI = 0
+    v = myMesh.v
+    f = myMesh.f[[0, 1, 5, 6]]
+    patch = Patch(parent, PI, v, f)
+    return patch
+
 def test_setup_example_mesh(myMesh):
     assert myMesh.v.shape == (6, 3)
     assert myMesh.f.shape == (8, 3)
@@ -36,22 +46,28 @@ def test_normals_example_mesh(myMesh):
     print(normals.shape, barycenters.shape, dot_product.shape)
     assert np.all(dot_product > 0)
 
-def test_select_faces_remove_5(myMesh):
-    newMesh, imv = myMesh.select_faces([0, 1, 2, 6])
-    assert newMesh.v.shape[0] == 5
-    assert imv[5] == -1
+def test_createPatch_remove_vertex_5(myMesh):
+    OLD_FI = 6
+    patch = myMesh.createPatch([0, 1, 2, 6], OLD_FI)
+    assert patch.v.shape[0] == 5
+    assert patch.pi == 3
 
-def test_select_faces_remove_3_and_4(myMesh):
-    newMesh, imv = myMesh.select_faces([0, 5])
-    assert newMesh.v.shape[0] == 4
-    assert imv[3] == -1
-    assert imv[4] == -1
+def test_createPatch_remove_vertices_3_and_4(myMesh):
+    OLD_FI = 5
+    patch = myMesh.createPatch([0, 5], OLD_FI)
+    assert patch.v.shape[0] == 4
+    assert patch.pi == 1
+
+def test_createPatch_remove_vertices_3_and_4_2(myMesh):
+    OLD_FI = 4
+    patch = myMesh.createPatch([0, 5], OLD_FI)
+    assert patch.v.shape[0] == 4
+    assert patch.pi == -1
 
 def test_copy_all_values_are_different_objects_or_values(myMesh):
     # Setup attribute values'
     _ = myMesh.getFaceNormals()
     _ = myMesh.getNeighbourhood(0, 1)
-    myMesh.pi = 0
     _ = myMesh.getVertexTriangleAdjacency()
     # Copy and assert
     newMesh = myMesh.copy()
@@ -217,3 +233,86 @@ def test_rotate_Normals(myMesh):
     myMesh.rotate(rotation)
 
     assert np.all(myMesh.n == expected_result)
+
+def test_myPatch_all_vertices_have_a_face(myPatch):
+    assert np.all(np.isin(np.arange(len(myPatch.v)), myPatch.f))
+
+def test_myPatch_patch_is_from_mesh(myPatch, myMesh):
+    assert myPatch.parent is myMesh
+
+def test_myPatch_patch_is_1_ring_and_pi_is_center(myPatch):
+    assert np.all(myPatch.getNeighbourhood(myPatch.pi, 1) == np.arange(len(myPatch.f)))
+
+def test_myPatch_patch_copy_duplicates_all_attributes(myPatch):
+    # Setup attribute values
+    _ = myPatch.getFaceNormals()
+    _ = myPatch.getNeighbourhood(myPatch.pi, 1)
+    _ = myPatch.getVertexTriangleAdjacency()
+    # Copy and assert
+    newPatch = myPatch.copy()
+    assert not (myPatch is newPatch)
+    for attribute, value1 in vars(myPatch).items():
+        value2 = vars(newPatch)[attribute]
+        assert not (value1 is None) and not (value2 is None)
+        assert not (value1 is value2) or type(value1) == int or type(value1) == Mesh
+
+def test_alignPatch_patch_is_centered(myPatch):
+    myPatch.alignPatch()
+    ORIGIN = np.array([0, 0, 0])
+    assert np.allclose(myPatch.getPCCenter(), ORIGIN)
+    
+def test_alignPatch_patch_is_unit_size(myPatch):
+    myPatch.alignPatch()
+    assert np.allclose(myPatch.getPCSize(), 1.0)
+
+def test_alignPatch_twice_has_same_center(myPatch):
+    myPatch.alignPatch()
+    testPatch = myPatch.copy()
+    testPatch.alignPatch()
+
+    center1 = myPatch.getPCCenter()
+    center2 = testPatch.getPCCenter()
+
+    assert np.allclose(center1, center2)
+
+def test_alignPatch_twice_has_same_size(myPatch):
+    myPatch.alignPatch()
+    testPatch = myPatch.copy()
+    testPatch.alignPatch()
+
+    size1 = myPatch.getPCSize()
+    size2 = testPatch.getPCSize()
+
+    assert np.allclose(size1, size2)
+    
+def test_alignPatch_twice_has_same_rotation(myPatch):
+    myPatch.alignPatch()
+    testPatch = myPatch.copy()
+    testPatch.alignPatch()
+
+    position1 = myPatch.getPCCenter()
+    position2 = testPatch.getPCCenter()
+
+    size1 = myPatch.getPCSize()
+    size2 = testPatch.getPCSize()
+
+    rotation1 = myPatch.getPaperRotationMatrix().matrix
+    rotation2 = testPatch.getPaperRotationMatrix().matrix
+
+    print(f"Position 1:\n{position1}\nPosition 2:\n{position2}\nSize 1:\n{size1}\nSize 2:\n{size2}\nRotation matrix 1:\n{rotation1}\nRotation matrix 2:\n{rotation2}")
+    print(f"Angle1 can be {np.arccos(rotation1[1][1])}, {np.arcsin(rotation1[1][2])}, {-np.arcsin(rotation1[2][1])} or {np.arccos(rotation1[2][2])}")
+    print(f"Angle2 can be {np.arccos(rotation2[1][1])}, {np.arcsin(rotation2[1][2])}, {-np.arcsin(rotation2[2][1])} or {np.arccos(rotation2[2][2])}")
+    # print(f"{rotation1.dtype}")
+
+    assert np.allclose(rotation1, rotation2)
+
+def test_alignPatch_rotationmatrix_after_alignment_should_be_identity_or_180_degrees_flipped(myPatch):
+    myPatch.alignPatch()
+    identity = np.identity(3)
+    flipped = np.array([[1, 0, 0], [0, -1, 0], [0, 0, -1]])
+    rotation_matrix = myPatch.getPaperRotationMatrix()
+    assert np.allclose(rotation_matrix.matrix, identity) or np.allclose(RotationMatrix.matrix, flipped)
+
+def test_getPaperRotationMatrix_returns_a_RotationMatrix_object(myPatch):
+    rotation_matrix = myPatch.getPaperRotationMatrix()
+    assert isinstance(rotation_matrix, RotationMatrix)
