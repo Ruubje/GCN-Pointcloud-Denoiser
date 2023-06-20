@@ -116,3 +116,27 @@ def test_RotationMatrix_Tj_check_eigenvector_is_njprime_scaled_with_muj(Rotation
         njprime = RotationMatrix.njprime[i]
         assert np.allclose(eigenvector, njprime) or np.allclose(-eigenvector, njprime)
         assert np.allclose(eigh[0][index_of_largest_eigenvalue], RotationMatrix.muj[i])
+
+def test_Einsum_Notation_Works_As_Intended(N=10):
+    A = np.random.rand(N, 3)
+    B = np.random.rand(N, 3, 3)
+
+    R = np.zeros((N, 3))
+    for i in range(N):
+        R[i, :] = B[i, :, :] @ A[i, :]
+        
+    einR = np.einsum("ij,ikj->ik", A, B)
+
+    assert np.allclose(einR, R)
+
+def test_Noise_Generation_Unbiased(N=100000, threshold=0.8):
+    random_sample = np.random.normal(size=(N, 3))
+    random_direction = random_sample / np.linalg.norm(random_sample, axis=1)[:, None]
+
+    axes = np.identity(3)
+    c = (1./3.)**(1./2.)
+    corners = np.array([[c, c, c], [-c, c, c], [-c, -c, c]])
+
+    normal_axes = np.sum(np.einsum("ni,ij->nj", random_direction, axes)>threshold)/N
+    diagonal_axes = np.sum(np.einsum("ni,ij->nj", random_direction, corners)>threshold)/N
+    assert (normal_axes - diagonal_axes) ** 2 < 0.1

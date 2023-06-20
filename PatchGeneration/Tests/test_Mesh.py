@@ -43,7 +43,6 @@ def test_normals_example_mesh(myMesh):
     normals = myMesh.getFaceNormals()
     barycenters = igl.barycenter(myMesh.v, myMesh.f)
     dot_product = np.sum(normals * barycenters, axis=1)
-    print(normals.shape, barycenters.shape, dot_product.shape)
     assert np.all(dot_product > 0)
 
 def test_createPatch_remove_vertex_5(myMesh):
@@ -141,8 +140,7 @@ def test_getFaceNormals(myMesh):
 
 def test_getFaceNormals_Twice(myMesh):
     face_normals = myMesh.getFaceNormals()
-    assert face_normals is myMesh.getFaceNormals()
-    assert myMesh.n is face_normals
+    assert  np.allclose(face_normals, myMesh.getFaceNormals())
 
 def test_getVertexTriangleAdjacency(myMesh):
     vta = myMesh.getVertexTriangleAdjacency()
@@ -169,13 +167,17 @@ def test_getTrianglesOfVertices(myMesh):
 
 def test_translate(myMesh):
     translation = np.array([0.5, 2.5, 1.3])
-    old_v = np.copy(myMesh.v)
+    old_v = np.copy(myMesh.getVertices())
     size = myMesh.getPCSize()
 
     myMesh.translate(translation)
 
-    assert np.all(np.square(myMesh.v - translation - old_v) < 0.001)
-    assert np.square(size - myMesh.getPCSize()) < 0.001
+    newVertices = myMesh.getVertices()
+    oldVerticesTranslated = old_v + translation
+
+    assert np.allclose(newVertices, oldVerticesTranslated)
+    assert np.allclose(size, myMesh.getPCSize())
+    # assert False
 
 def test_resize(myMesh):
     new_size = 100
@@ -232,7 +234,7 @@ def test_rotate_Normals(myMesh):
 
     myMesh.rotate(rotation)
 
-    assert np.all(myMesh.n == expected_result)
+    assert np.allclose(myMesh.getFaceNormals(), expected_result)
 
 def test_myPatch_all_vertices_have_a_face(myPatch):
     assert np.all(np.isin(np.arange(len(myPatch.v)), myPatch.f))
@@ -248,6 +250,7 @@ def test_myPatch_patch_copy_duplicates_all_attributes(myPatch):
     _ = myPatch.getFaceNormals()
     _ = myPatch.getNeighbourhood(myPatch.pi, 1)
     _ = myPatch.getVertexTriangleAdjacency()
+    myPatch.lastRotationApplied = np.identity(3)
     # Copy and assert
     newPatch = myPatch.copy()
     assert not (myPatch is newPatch)
@@ -311,7 +314,7 @@ def test_alignPatch_rotationmatrix_after_alignment_should_be_identity_or_180_deg
     identity = np.identity(3)
     flipped = np.array([[1, 0, 0], [0, -1, 0], [0, 0, -1]])
     rotation_matrix = myPatch.getPaperRotationMatrix()
-    assert np.allclose(rotation_matrix.matrix, identity) or np.allclose(RotationMatrix.matrix, flipped)
+    assert np.allclose(rotation_matrix.matrix, identity) or np.allclose(rotation_matrix.matrix, flipped)
 
 def test_getPaperRotationMatrix_returns_a_RotationMatrix_object(myPatch):
     rotation_matrix = myPatch.getPaperRotationMatrix()

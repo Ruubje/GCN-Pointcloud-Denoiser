@@ -8,6 +8,7 @@ class RotationMatrix():
     # Returns a 3x3 array containing the rotation matrix.
     def __init__(self, patch):
         # This sigma should be changed in the future maybe! This is the best guess for what sigma should be currently..
+        # Proof has been found in the code that sigma should indeed be a third!
         SIGMA = 1./3.
         # Can only execute if attribute pi is set with a face id.
         self.bcs = igl.barycenter(patch.v, patch.f)
