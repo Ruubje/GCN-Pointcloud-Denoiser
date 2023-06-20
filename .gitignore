@@ -32,13 +32,13 @@
 
 # GCNDenoiser files
 GCNDenoiser/*.obj
-GCNDenoiser/*.t7
 
 # Settings files
 *.ini
 
 # Trained model files
 *.pt
+*.t7
 
 # Floders
 .vs/
