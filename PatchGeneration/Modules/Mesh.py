@@ -9,8 +9,6 @@ import errno
 
 from .RotationMatrix import RotationMatrix as rm
 
-DEFAULT_NOISY = True
-
 # This class contains methods to manipulate a mesh with vertices and faces.
 class Mesh:
     # Initialize the mesh object.
@@ -20,13 +18,12 @@ class Mesh:
     # fn is a list of indices connecting vertices to create a face normal???
     # f2f is a map created by igl showing which face is neighbouring which face.
     #   It is only initialized if neighbour look ups are needed.
-    def __init__(self, v, f, noisy_v = None, noise_factor = None, f2f = None, vta = None):
+    def __init__(self, v, f, noise_factor = None, f2f = None, vta = None):
         self.v = v
         self.f = f
-        self.noisy_v = noisy_v if not(noisy_v is None) else np.copy(v)
         self.noise_factor = noise_factor if not (noise_factor is None) else 0
-        self.f2f = f2f if not (f2f is None) else igl.triangle_triangle_adjacency(self.f)[0]
-        self.vta = vta if not (vta is None) else igl.vertex_triangle_adjacency(self.f, len(self.v))
+        self.f2f = f2f if not (f2f is None) else igl.triangle_triangle_adjacency(f)[0]
+        self.vta = vta if not (vta is None) else igl.vertex_triangle_adjacency(f, len(v))
 
     """
     Class methods
@@ -55,8 +52,8 @@ class Mesh:
         vertices = None
         color = None
         for i, mesh in enumerate(meshes):
-            vertices = mesh.v if i==0 else np.append(vertices, mesh.v, axis=0)
-            tiledIndex = np.tile(i, (mesh.v.shape[0], 1))
+            vertices = mesh.getVertices() if i==0 else np.append(vertices, mesh.getVertices(), axis=0)
+            tiledIndex = np.tile(i, (mesh.getVertices().shape[0], 1))
             color = tiledIndex if i==0 else np.append(color, tiledIndex, axis=0)
         return mp.plot(vertices, c=color, shading={"point_size": np.max(np.linalg.norm(vertices))/1000})
     
@@ -69,9 +66,9 @@ class Mesh:
         faces = None
         color = None
         for i, mesh in enumerate(meshes):
-            vertices = mesh.v if i==0 else np.append(vertices, mesh.v, axis=0)
-            faces = mesh.f if i==0 else np.append(faces, mesh.f + np.tile(vertices.shape[0] - mesh.v.shape[0], mesh.f.shape), axis=0)
-            tiledIndex = np.tile(i, (mesh.v.shape[0], 1))
+            vertices = mesh.getVertices() if i==0 else np.append(vertices, mesh.getVertices(), axis=0)
+            faces = mesh.f if i==0 else np.append(faces, mesh.f + np.tile(vertices.shape[0] - mesh.getVertices().shape[0], mesh.f.shape), axis=0)
+            tiledIndex = np.tile(i, (mesh.getVertices().shape[0], 1))
             color = tiledIndex if i==0 else np.append(color, tiledIndex, axis=0)
         return mp.plot(vertices, faces, c=color, shading={"wireframe": True})
 
@@ -81,15 +78,14 @@ class Mesh:
     """
 
     # Returns the vertices of the mesh.
-    # If use_noisy is true, the noisy vertices are returned.
-    def getVertices(self, use_noisy=DEFAULT_NOISY):
-        return self.noisy_v if use_noisy else self.v
+    def getVertices(self):
+        return self.v
     
     # Getter method for the face normals.
     # If they are not calculated yet, they are calculated upon calling this method.
     # Returns array of face normals.
-    def getFaceNormals(self, use_noisy=DEFAULT_NOISY):
-        faceVertices = self.getVertices(use_noisy)[self.f]
+    def getFaceNormals(self):
+        faceVertices = self.getVertices()[self.f]
         crosses = np.cross(faceVertices[:, 1, :] - faceVertices[:, 0, :], faceVertices[:, 2, :] - faceVertices[:, 1, :])
         faceNormals = crosses / np.linalg.norm(crosses, axis=1)[:, None]
         return faceNormals
@@ -102,28 +98,28 @@ class Mesh:
 
     # Calculates the center of the mesh by averaging all vertex positions.
     # Returns the center of the mesh.
-    def getPCCenter(self, use_noisy=DEFAULT_NOISY):
-        num_vertices = self.getVertices(use_noisy).shape[0]
-        center = np.sum(self.getVertices(use_noisy), axis=0)/num_vertices
+    def getPCCenter(self):
+        num_vertices = self.getVertices().shape[0]
+        center = np.sum(self.getVertices(), axis=0)/num_vertices
         return center
 
     # Calculates the size of the mesh.
     # The size is defined as the vertex with the maximum distance from the center of the mesh.
     # Returns 3x1 array, center of the mesh.
-    def getPCSize(self, use_noisy=DEFAULT_NOISY):
+    def getPCSize(self):
         center = self.getPCCenter()
-        return np.max(np.linalg.norm(self.getVertices(use_noisy) - np.tile(center, (self.getVertices().shape[0], 1)), axis=1))
+        return np.max(np.linalg.norm(self.getVertices() - np.tile(center, (self.getVertices().shape[0], 1)), axis=1))
     
     # Calculates the bounding size in which the Mesh perfectly fits.
     # Returns 3x1 array containing the size of the bounding box.
-    def getPCBoundingBox(self, use_noisy=DEFAULT_NOISY):
-        return np.max(self.getVertices(use_noisy), axis=0) - np.min(self.getVertices(), axis=0)
+    def getPCBoundingBox(self):
+        return np.max(self.getVertices(), axis=0) - np.min(self.getVertices(), axis=0)
 
     # Calculates the areas of the given faces.
     # faces is an array with indices to faces from which the areas need to be calculated.
     # Returns #facesx1 array with the areas corresponding to the face indices.
-    def getAreas(self, faces, use_noisy=DEFAULT_NOISY):
-        triangles = self.getVertices(use_noisy)[self.f[faces]]
+    def getAreas(self, faces):
+        triangles = self.getVertices()[self.f[faces]]
         As = triangles[:,1,:] - triangles[:,0,:]
         Bs = triangles[:,2,:] - triangles[:,0,:]
         cross = np.cross(As, Bs, axis=1)
@@ -135,8 +131,8 @@ class Mesh:
     # center is a 3x1 array representing the center of the sphere.
     # range is a number representing the radius of the sphere.
     # Returns an 1D array containing face indices of all faces that contain a vertex that is within the sphere.
-    def getFacesInRange(self, center, range, use_noisy=DEFAULT_NOISY):
-        translated = self.getVertices(use_noisy) - center
+    def getFacesInRange(self, center, range):
+        translated = self.getVertices() - center
         dist = np.linalg.norm(translated, axis=1)
         vm = dist < range
         vertices = np.arange(vm.shape[0])[vm]
@@ -149,8 +145,8 @@ class Mesh:
     #    Only faces that also attach to the given face get returned.
     # Therefore, the center argument is replaced by a face_index.
     # The center of the face_index is used for range calculations.
-    def getNeighbourhoodInRange(self, center_face_index, range, use_noisy=DEFAULT_NOISY):
-        v = self.getVertices(use_noisy)
+    def getNeighbourhoodInRange(self, center_face_index, range):
+        v = self.getVertices()
         center = v[self.f[center_face_index]]
         faces_in_range = np.array([center_face_index])
 
@@ -207,8 +203,8 @@ class Mesh:
         return triangles
     
     # Get the average edge length of the mesh.
-    def getAverageEdgeLength(self, use_noisy=DEFAULT_NOISY):
-        return igl.avg_edge_length(self.getVertices(use_noisy), self.f)
+    def getAverageEdgeLength(self):
+        return igl.avg_edge_length(self.getVertices(), self.f)
     
     """
     Select faces by mask (array with trues and falses) or id (face ids to keep)
@@ -221,15 +217,13 @@ class Mesh:
     # Returns newMesh is the new Mesh object
     #         imv is a map that points the old vertex index to the new vertex index.
     def createPatch(self, faceIds, old_fi):
-        nv, nf, imv, _ = igl.remove_unreferenced(self.v, self.f[faceIds])
-        noisy_nv, _, _, _ = igl.remove_unreferenced(self.noisy_v, self.f[faceIds])
+        nv, nf, imv, _ = igl.remove_unreferenced(self.getVertices(), self.f[faceIds])
         new_fi = self.getNewFaceIndex(old_fi, nf, imv)
         newMesh = Patch(self, new_fi, nv, nf)
-        newMesh.setNoise(noisy_nv, self.noise_factor)
+        newMesh.setNoise(self.noise_factor)
         return newMesh
 
-    def setNoise(self, noisy_v, noise_factor):
-        self.noisy_v = noisy_v
+    def setNoise(self, noise_factor):
         self.noise_factor = noise_factor
 
     # Gets the new index of a face after patch selection of a given old face index.
@@ -249,11 +243,10 @@ class Mesh:
     def copy(self):
         v_copy = copy.deepcopy(self.v)
         f_copy = copy.deepcopy(self.f)
-        noisy_v_copy = copy.deepcopy(self.noisy_v)
         noise_factor_copy = self.noise_factor # This is not numpy and therefore doesn't need to be deepcopied!
         f2f_copy = copy.deepcopy(self.f2f)
         vta_copy = copy.deepcopy(self.vta)
-        return Mesh(v_copy, f_copy, noisy_v_copy, noise_factor_copy, f2f_copy, vta_copy)
+        return Mesh(v_copy, f_copy, noise_factor_copy, f2f_copy, vta_copy)
 
     """
     Transformation methods
@@ -267,19 +260,17 @@ class Mesh:
     def translate(self, translation):
         tiled_translation = np.tile(translation, (self.getVertices().shape[0], 1))
         self.v += tiled_translation
-        self.noisy_v += tiled_translation
         return self
 
     # Resizes the mesh to the given size. Size is defined as the vertex with the maximum distance to the center of the mesh.
     # size is the target size to scale to.
     # Returns the object itself.
-    def resize(self, size, use_noisy=DEFAULT_NOISY):
+    def resize(self, size):
         center = self.getPCCenter()
         self.translate(-center)
-        current_size = np.max(np.linalg.norm(self.getVertices(use_noisy), axis=1))
+        current_size = np.max(np.linalg.norm(self.getVertices(), axis=1))
         scale = size / current_size
         self.v *= scale
-        self.noisy_v *= scale
         self.translate(center)
         return self
 
@@ -287,26 +278,25 @@ class Mesh:
     # rotationMatrix is a 3x3 array representing a rotation matrix.
     # Returns the object itself.
     def rotate(self, rotationMatrix):
+        v = self.getVertices()
         center = self.getPCCenter()
         self.translate(-center)
-        rotated_v = np.dot(rotationMatrix, self.v.T).T
+        rotated_v = np.dot(rotationMatrix, v.T).T
         self.v = rotated_v
-        rotated_v = np.dot(rotationMatrix, self.noisy_v.T).T
-        self.noisy_v = rotated_v
         self.translate(center)
         return self
     
     # Applying Gaussian noise on the current Mesh and saving it in a seperate attribute.
     # Returns the noisy vertices and normals that just have been created.
     def applyGaussianNoise(self, factor=0.1):
-        random_sample = np.random.normal(size=(self.v.shape[0], 3))
+        v = self.getVertices()
+        random_sample = np.random.normal(size=(v.shape[0], 3))
         random_direction = random_sample / np.linalg.norm(random_sample, axis=1)[:, None]
-        stdev = self.getAverageEdgeLength(False)*factor
-        random_gaussian_sample = np.random.normal(0, stdev, (self.v.shape[0], 1))
+        stdev = self.getAverageEdgeLength()*factor
+        random_gaussian_sample = np.random.normal(0, stdev, (v.shape[0], 1))
         noise = random_direction * np.tile(random_gaussian_sample, (1, 3))
-        self.noisy_v = self.v + noise
+        self.v += noise
         self.noise_factor = factor
-        return self.noisy_v
     
     # Update the vertices of the mesh such that the normals of the faces align with the given normals.
     # n is an array with normals for every face.
@@ -314,11 +304,11 @@ class Mesh:
     # This method is tested in a notebook!
     def updateVertices(self, n, k=15):
         # Vertices
-        v = myMesh.getVertices()
+        v = self.getVertices()
         # Faces of mesh
-        f = myMesh.f
+        f = self.f
         # Vertex Triangle Adjacency
-        vta = myMesh.getVertexTriangleAdjacency()
+        vta = self.getVertexTriangleAdjacency()
         # Repeat algorithm k times
         for _ in range(k):
             _V = len(v)
@@ -362,22 +352,22 @@ class Mesh:
 
     # Visualizes the mesh as a point cloud using meshplot.
     def mpShowPC(self):
-        mp.plot(self.v, shading={"point_size": np.max(np.linalg.norm(self.v))/1000})
+        mp.plot(self.getVertices(), shading={"point_size": np.max(np.linalg.norm(self.v))/1000})
     
     # Visualizes the mesh a mesh using meshplot.
     def mpShowMesh(self):
-        mp.plot(self.v, self.f, shading={"wireframe": True})
+        mp.plot(self.getVertices(), self.f, shading={"wireframe": True})
     
     # Visualize the vertices as a point cloud using polyscope.
     def psViewPC(self):
         ps.init()
-        ps.register_point_cloud("main", self.v)
+        ps.register_point_cloud("main", self.getVertices())
         ps.show()
 
     # Visualize the vertices, edges and faces as a mesh using polyscope.
     def psViewMesh(self):
         ps.init()
-        ps.register_surface_mesh("main", self.v, self.f)
+        ps.register_surface_mesh("main", self.getVertices(), self.f)
         ps.show()
 
 # A patch is a part of a Mesh that is selected to do further calculations on.
@@ -400,11 +390,10 @@ class Patch(Mesh):
         lr_copy = copy.deepcopy(self.lastRotationApplied)
         v_copy = copy.deepcopy(self.v)
         f_copy = copy.deepcopy(self.f)
-        noisy_v_copy = copy.deepcopy(self.noisy_v)
         noise_factor_copy = self.noise_factor # This is not numpy and therefore doesn't need to be deepcopied!
         f2f_copy = copy.deepcopy(self.f2f)
         vta_copy = copy.deepcopy(self.vta)
-        new_patch = Patch(parent_copy, pi_copy, v_copy, f_copy, noisy_v_copy, noise_factor_copy, f2f_copy, vta_copy)
+        new_patch = Patch(parent_copy, pi_copy, v_copy, f_copy, noise_factor_copy, f2f_copy, vta_copy)
         new_patch.lastRotationApplied = lr_copy
         return new_patch
     
@@ -434,14 +423,15 @@ class Patch(Mesh):
     # The patch can be converted to a graph representation with this method.
     # Returns an adjacency matrix and a feature vector per graph node.
     def toGraph(self):
+        v = self.getVertices()
         E = igl.triangle_triangle_adjacency(self.f)[0]
-        centers = igl.barycenter(self.v, self.f)
+        centers = igl.barycenter(v, self.f)
         normals = self.getFaceNormals()
         areas = self.getAreas(np.arange(self.f.shape[0])).reshape(-1, 1)
         neighbors = (E != -1).sum(axis=1).reshape(-1, 1)
-        point_positions = self.noisy_v[self.f].reshape(-1, 9)
+        point_positions = v[self.f].reshape(-1, 9)
         V = np.concatenate((centers, normals, areas, neighbors, point_positions), axis=1)
-        return V, E
+        return E, V
 
     # Saves the Patch to a file, which can later be imported and used by the GCN.
     # file_path is the path towards the file where the patch needs to be saved.
@@ -451,7 +441,7 @@ class Patch(Mesh):
         if not file_path.endswith(".mat"):
             raise ValueError("file_path (first argument) must be a path ending with '.mat', to save the patch as a '.mat' file.")
 
-        FEA, MAT = self.toGraph()
+        MAT, FEA = self.toGraph()
         GT = self.getFaceNormals()[self.pi].reshape(3, 1) # The normal of the middle face (ground truth)
         ROT = self.lastRotationApplied
 
@@ -466,5 +456,5 @@ class Patch(Mesh):
 
 if __name__ == "__main__":
     myMesh = Mesh.readFile('MyProject/new_saved_fandisk.obj')
-    patch = myMesh.getPatch(myMesh.v[0], 10)
-    myMesh.ViewPC(patch.v)
+    patch = myMesh.getPatch(myMesh.getVertices()[0], 10)
+    myMesh.ViewPC(patch.getVertices())

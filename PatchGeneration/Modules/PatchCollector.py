@@ -2,7 +2,7 @@ import numpy as np
 from .Mesh import Mesh
 import pathlib
 import time
-from .Network.DataUtils import PatchDataset
+from .Network.DataUtils import *
 
 # PatchCollector is a class that creates and keeps track of patches from a mesh.
 class PatchCollector:
@@ -76,7 +76,9 @@ class PatchCollector:
             print(msg)
 
     # Collects all patches and transforms them into input for a DGCNN.
-    def collectNetworkInput(self, timeout=-1):
+    def collectNetworkInput(self, max_batch_size, timeout=-1):
         patches = self.collectAllPatches(timeout)
-        fileformat = np.array([PatchDataset.file2input(*patch.toGraph(), 64) for patch in patches])
-        print(fileformat.shape)
+        fileformat = np.array([FileDataset.file2input(*patch.toGraph(), 64) for patch in patches])
+        rotations = np.array([p.lastRotationApplied for p in patches])
+        pd = PatchDataset(fileformat, rotations, max_batch_size)
+        return pd

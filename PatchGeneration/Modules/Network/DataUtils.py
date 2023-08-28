@@ -16,13 +16,13 @@ import random
 # 1. You create a dataset and tell it locations of folders to use in the dataset.
 # 2. Then you tell it to generate a list of file paths that are within the folders.
 # 3. Then we split this list into training / validation lists.
-# 4. Then we load these lists into a PatchDataset to me used when training or validating.
+# 4. Then we load these lists into a FileDataset to me used when training or validating.
 # Seperate save files can be made for saving the dataset and saving the way it is split.
 # When loading a dataset (list of file paths), the paths should be checked for correctness.
 # When loading split settings, it should be checked if the split settings and the dataset agree on having the same size.
-class PatchDataset(Tdata.Dataset):
+class FileDataset(Tdata.Dataset):
     def __init__(self, data_path, batch_size, num_workers, num_neighbors, is_train=True):
-        super(PatchDataset).__init__()
+        super(FileDataset).__init__()
         self.batch_size = batch_size
         self.num_workers = num_workers
         self.num_neighbors = num_neighbors
@@ -38,7 +38,7 @@ class PatchDataset(Tdata.Dataset):
     # Transforms an adjacency matrix and features vectors (representing a patch as graph) to input for a network.
     # Mainly pads the data, such that all inputs have the same shape.
     @classmethod
-    def file2input(cls, input_matrix, input_features, num_neighbors=64):        
+    def file2input(cls, input_matrix, input_features, num_neighbors=64):
         num_faces = input_matrix.shape[0]
         if(num_faces >= num_neighbors):
             input_matrix = input_matrix[0:num_neighbors, 0:num_neighbors]
@@ -83,20 +83,66 @@ class PatchDataset(Tdata.Dataset):
         gt_norm = source_data["GT"]
         gt_norm = np.array(gt_norm).reshape(-1).astype(np.float32)
 
-        inputs = PatchDataset.file2input(input_matrix, input_features, self.num_neighbors)
+        inputs = FileDataset.file2input(input_matrix, input_features, self.num_neighbors)
 
         return inputs, gt_norm
 
     # This is used by the DataLoader. If the DataLoader is indexed, this function tells to actually load a file, read it and return it's content.
     def __getitem__(self, index):
-        inputs, gt, gt_norm, center_norm = self.loadMAT(self.data_path[index])
-        return inputs, gt, gt_norm, center_norm
+        inputs, gt_norm = self.loadMAT(self.data_path[index])
+        return inputs, gt_norm
 
     # Returns a Torch DataLoader object, which can be iterated and used for training or testing purposes.
     def getDataloader(self):
         return Tdata.DataLoader(dataset=self, batch_size=self.batch_size, shuffle=self.is_train, num_workers=self.num_workers, pin_memory=True, drop_last=True)
 
-# This class handles selecting folders, splitting datasets and generating PatchDatasets.
+# This class is used for the forward pass.
+# It contains a numpy array of network inputs, instead of files
+class PatchDataset(Tdata.Dataset):
+    def __init__(self, data_patch, data_rotations, max_batch_size, num_workers=8):
+        if type(data_patch) != np.ndarray or len(data_patch.shape) != 3:
+            raise ValueError(f"data_patch is not a valid 3-dimensional ndarray! Currently it is {data_patch}")
+        if type(data_rotations) != np.ndarray or len(data_rotations.shape) != 3:
+            raise ValueError(f"data_rotations is not a valid 3-dimensional ndarray! Currently it is {data_rotations}")
+        if data_patch.shape[0] != data_rotations.shape[0]:
+            raise ValueError(f"data_patch and data_rotations do not have the same amount of patches that they represent! Currently it is:\npatches: {data_patch.shape[0]}\nrotations: {data_rotations.shape[0]}")
+        if not isinstance(max_batch_size, int) or max_batch_size < 1:
+            raise ValueError(f"max_batch_size should be an integer bigger than zero. Currently it is {max_batch_size}")
+
+        super(PatchDataset).__init__()
+        self.batch_size = self.getPreferredBatchSize(len(data_patch), max_batch_size)
+        self.num_workers = num_workers
+
+        self.data_patch = data_patch
+        self.data_rotations = data_rotations
+        self.SIZE = data_patch.shape[0]
+
+    def __len__(self):
+        return self.SIZE
+
+    def __getitem__(self, index):
+        inputs = self.data_patch[index]
+        return inputs
+    
+    # Calculates the biggest possible batch size, such that
+    #   the batch size is a factor of the number of inputs n and
+    #   the batch size is not bigger than the maximum batch size m.
+    @classmethod
+    def getPreferredBatchSize(cls, n, m):
+        if not isinstance(n, int) or not isinstance(m, int):
+            raise ValueError(f"n and m should be integers to calculate preferred batch size.\nm = {m}\nn = {n}")
+        
+        r = np.arange(1, int(n**0.5)+1)
+        f = n % r == 0
+        factors = np.append(r[f], np.flip(n / r[f]))
+        result = factors[factors < m]
+        return int(np.max(result))
+
+    # Returns a Torch DataLoader object, which can be iterated and used for training or testing purposes.
+    def getDataloader(self):
+        return Tdata.DataLoader(dataset=self, batch_size=self.batch_size, shuffle=False, num_workers=self.num_workers, pin_memory=True, drop_last=True)
+
+# This class handles selecting folders, splitting datasets and generating FileDatasets.
 class DatasetManager():
     def __init__(self, batch_size=256, num_workers=8, num_neighbors=64):
         self.batch_size = batch_size
@@ -244,7 +290,7 @@ class DatasetManager():
         train_index = np.delete(np.arange(self.data_path.shape[0]), np.delete(self.split, 0))
         train_path = self.data_path[train_index]
 
-        dataset = PatchDataset(train_path, self.batch_size, self.num_workers, self.num_neighbors, is_train=True)
+        dataset = FileDataset(train_path, self.batch_size, self.num_workers, self.num_neighbors, is_train=True)
         return dataset.getDataloader()
 
     def getValidationSet(self):
@@ -256,5 +302,5 @@ class DatasetManager():
         val_index = np.delete(self.split, 0)
         val_path = self.data_path[val_index]
 
-        dataset = PatchDataset(val_path, self.batch_size, self.num_workers, self.num_neighbors, is_train=False)
+        dataset = FileDataset(val_path, self.batch_size, self.num_workers, self.num_neighbors, is_train=False)
         return dataset.getDataloader()
