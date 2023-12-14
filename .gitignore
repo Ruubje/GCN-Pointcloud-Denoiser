@@ -30,8 +30,8 @@
 *.out
 *.app
 
-# GCNDenoiser files
-GCNDenoiser/*.obj
+# Object files don't need to be stored anymore..
+*.obj
 
 # Settings files
 *.ini
@@ -40,7 +40,7 @@ GCNDenoiser/*.obj
 *.pt
 *.t7
 
-# Floders
+# Folders
 .vs/
 x64/
 TestData/
@@ -58,3 +58,10 @@ src/
 *.vcxproj
 *.vcxproj.filters
 *.vcxproj.user
+
+# Tensorboard log files
+*.Ruben
+
+# Split and dataset saves
+*.npy
+*.h5

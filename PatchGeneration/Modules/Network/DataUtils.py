@@ -69,7 +69,6 @@ class FileDataset(Tdata.Dataset):
         inputs = np.c_[input_features, input_indices]
         return inputs
 
-
     # Load a single patch file and return its content.
     def loadMAT(self, data_path):
         source_data = sio.loadmat(data_path)
@@ -180,12 +179,14 @@ class DatasetManager():
         self.is_generated = False
 
     # Given a folder path, load a folder into the MatrixDataset.
-    def generateDatasetFromFolders(self):
+    def generateDatasetFromFolders(self, maxFilesPerFolder=-1):
         dataset = []
         for folder_path in self.folder_list:
             file_paths = [folder_path + "/" + x for x in os.listdir(folder_path) if x.endswith(".mat")]
             if len(file_paths) == 0:
                 raise Exception(f"Folder [{folder_path}] is a directory, which doesn't contain a .mat file! (And therefore is not a dataset)")
+            elif maxFilesPerFolder > -1 and len(file_paths) > maxFilesPerFolder:
+                file_paths = random.sample(file_paths, maxFilesPerFolder)
             dataset.extend(file_paths)
         self.setDataset(np.array(dataset))
         self.is_generated = True

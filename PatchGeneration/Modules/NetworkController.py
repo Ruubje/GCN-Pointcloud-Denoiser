@@ -1,6 +1,6 @@
 # File that contains code that can train networks on data.
 
-from .Network.GCNModel import DGCNN
+from .Network.GCNModel import *
 from .Network.DataUtils import *
 from .Mesh import *
 from .PatchCollector import *
@@ -14,7 +14,7 @@ os.environ["CUDA_VISIBLE_DEVICES"] = "0"
 
 class Network():
     def __init__(self, model):
-        if not isinstance(model, DGCNN):
+        if not isinstance(model, DGCNN) and not isinstance(model, BetterDGCNN):
             raise ValueError(f"A Network is instantiated with a model that is not a member of DGCNN.\nCurrent type: {type(model)}")
         self.model = model
     
@@ -53,6 +53,8 @@ class Network():
 
 class NetworkTrainer():
 
+    NETWORK_DIR = "Networks"
+
     # A Network has a model and data.
     # The model weights are being trained.
     # The data is used for training.
@@ -65,22 +67,21 @@ class NetworkTrainer():
         self.data = data
     
     # Train the current model on the given training set.
-    def train(self, epochs, model_save_file, summary_save_directory, save_epoch_models=False, Adam_learning_rate=0.0001, Adam_betas=(0.9, 0.999), loss_based_on_value_loss=1.):
+    def train(self, epochs, model_save_directory, save_epoch_models=False, Adam_learning_rate=0.0001, Adam_betas=(0.9, 0.999), loss_based_on_value_loss=1., start_epoch=0):
         if type(epochs) != int or epochs < 1:
             raise ValueError(f"epochs should be an integers higher than zero being the amount of epochs you want to train. Currently it is {epochs}")
         if type(Adam_learning_rate) != float or Adam_learning_rate**2 > 1:
             raise ValueError(f"Adam_learning_rate should be a number between 0 and 1. Currently it is {Adam_learning_rate}")
         if type(Adam_betas) != tuple or len(Adam_betas) != 2 or any([type(x) != float for x in Adam_betas]) or any([x**2 > 1 for x in Adam_betas]) or Adam_betas[0] > Adam_betas[1]:
             raise ValueError(f"Adam_betas should be a tuple of 2 floats between 0 and 1 with the first value lower than the second value. Currently it is {Adam_betas}")
-        if type(model_save_file) != str or os.path.isfile(model_save_file) or not model_save_file.endswith(".t7") or not Path(model_save_file).parent.exists():
-            raise ValueError(f"model_save_file should be a string with a path to a .t7 location where the trained model can be saved, without overwriting existing files. Currently it is {model_save_file}")
-        if type(summary_save_directory) != str or not os.path.isdir(summary_save_directory):
-            raise ValueError(f"summary_save_directory should be a string targetting an existing directory on the machine. Currently it is {summary_save_directory}")
+        if type(model_save_directory) != str or os.path.isdir(model_save_directory):
+            raise ValueError(f"model_save_directory should be a string with a path to a directory location where no directory exists yet, to save the trained model and summaries. Currently it is {model_save_directory}")
         if type(save_epoch_models) != bool:
             raise ValueError(f"save_epoch_models should be True or False. Currently it is {save_epoch_models}")
 
-        model_save_directory = Path(model_save_file).parent.absolute()
-        k_loss_writer = SummaryWriter(summary_save_directory)
+        torch.cuda.empty_cache()
+
+        k_loss_writer = SummaryWriter(model_save_directory)
 
         print('Loading data...')
         
@@ -104,7 +105,8 @@ class NetworkTrainer():
         print('Start training...')
         last_val_cos_loss = 999.
         last_val_value_loss = 999.
-        for epoch in range(epochs):
+        for i_epoch in range(epochs - start_epoch):
+            epoch = i_epoch + start_epoch
             for i_train, data in enumerate(train_data_loader):
                 inputs, gt_norm = data
                 inputs = inputs.type(torch.FloatTensor)
@@ -125,6 +127,9 @@ class NetworkTrainer():
                 if(i_train % 100 == 0):
                     k_loss_writer.add_scalar('cos_loss', cos_loss, global_step=epoch * num_train_batch + i_train + 1)
                     k_loss_writer.add_scalar('value_loss', value_loss, global_step=epoch * num_train_batch + i_train + 1)
+
+                if torch.isnan(cos_loss):
+                    print(f"")
 
                 loss = weight_alpha * cos_loss + weight_beta * value_loss
                 loss.backward()
@@ -171,13 +176,13 @@ class NetworkTrainer():
             
             if save_epoch_models:
                 self.network.setModel(dgcnn)
-                self.network.saveModel(str(model_save_directory) + f"/{int(time.time()) % 1000000}_{round(last_val_cos_loss, 4)}_{epoch}.t7")
+                self.network.saveModel(f"{model_save_directory}/{model_save_directory}_{last_val_cos_loss:.3f}_{epoch}.t7")
 
             k_loss_writer.add_scalar('val_cos_loss', last_val_cos_loss, global_step=epoch + 1)
             k_loss_writer.add_scalar('val_value_loss', last_val_value_loss, global_step=epoch + 1)
         
         self.network.setModel(dgcnn)
-        self.network.saveModel(model_save_file)
+        self.network.saveModel(f"{model_save_directory}/{model_save_directory}.t7")
 
     # Validate the current model with the validation set.
     def test(self, loss_based_on_value_loss=1.):
@@ -253,8 +258,8 @@ class NetworkUser():
         return reverse_alignment
                 
     # WIP Needs to forward input graphs through the given model, such that the output can be used for vertex updating.
-    def forwardObj(self, filename):
+    def forwardObj(self, filename, max_batch_size):
         mesh = Mesh.readFile(filename)
         pc = PatchCollector(mesh)
-        inputs = pc.collectNetworkInput(8)
+        inputs = pc.collectNetworkInput(max_batch_size)
         return self.forward(inputs)
