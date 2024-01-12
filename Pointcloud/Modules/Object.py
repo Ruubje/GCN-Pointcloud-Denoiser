@@ -1,12 +1,36 @@
 from copy import deepcopy
-from igl import barycenter as igl_barycenter, doublearea as igl_doublearea, read_obj as igl_read_obj, vertex_triangle_adjacency as igl_vertex_triangle_adjacency, per_vertex_normals as igl_per_vertex_normals, per_face_normals as igl_per_face_normals, triangle_triangle_adjacency as igl_triangle_triangle_adjacency, vertex_triangle_adjacency as igl_vertex_triangle_adjacency
-from numpy import any as np_any, arange as np_arange, argwhere as np_argwhere, array as np_array, c_ as np_c_, cross as np_cross, logical_not as np_logical_not, nan_to_num as np_nan_to_num, ones as np_ones, repeat as np_repeat, sort as np_sort, vstack as np_vstack, unique as np_unique, zeros as np_zeros
+from igl import barycenter as igl_barycenter,\
+    doublearea as igl_doublearea,\
+    read_obj as igl_read_obj,\
+    vertex_triangle_adjacency as igl_vertex_triangle_adjacency,\
+    per_vertex_normals as igl_per_vertex_normals,\
+    per_face_normals as igl_per_face_normals,\
+    triangle_triangle_adjacency as igl_triangle_triangle_adjacency,\
+    vertex_triangle_adjacency as igl_vertex_triangle_adjacency
+from numpy import any as np_any,\
+    arange as np_arange,\
+    argwhere as np_argwhere,\
+    array as np_array,\
+    c_ as np_c_,\
+    cross as np_cross,\
+    logical_not as np_logical_not,\
+    nan_to_num as np_nan_to_num,\
+    ones as np_ones,\
+    repeat as np_repeat,\
+    sort as np_sort,\
+    sum as np_sum,\
+    vstack as np_vstack,\
+    unique as np_unique,\
+    zeros as np_zeros
 from pathlib import Path
 #https://github.com/nmwsharp/robust-laplacians-py
 from robust_laplacian import point_cloud_laplacian
 from scipy.spatial import KDTree as scipy_spatial_KDTree
 from sklearn.preprocessing import normalize as sklearn_preprocessing_normalize
-from torch import arange as torch_arange, from_numpy as torch_from_numpy, long as torch_long, stack as torch_stack
+from torch import arange as torch_arange,\
+    from_numpy as torch_from_numpy,\
+    long as torch_long,\
+    stack as torch_stack
 from torch_geometric.data import Data as pyg_data_Data
 from warnings import warn
 
@@ -73,7 +97,7 @@ class Pointcloud(Object):
         self.v = v
         self.kdtree = scipy_spatial_KDTree(v)
         self.calculateNormals()
-        self.a = self.getAreas()
+        self.calculateAreas()
         if calculate_meta:
             self.setGraph(mode=mode)
 
@@ -81,15 +105,24 @@ class Pointcloud(Object):
         self.vn = np_nan_to_num(igl_per_vertex_normals(self.v, self.f), copy=False, nan=0)
         self.fn = igl_per_face_normals(self.v, self.f, Mesh.DEGENERATE_NORMAL_PLACEHOLDER)
 
-    def getAreas(self):
-        return igl_doublearea(self.v, self.f) / 2.0
+    def calculateAreas(self):
+        if self.vta is None:
+            raise AttributeError("Attribure 'vta' not found.")
+        _vta = self.vta
+        _vta1 = _vta[1]
+        self.fa = igl_doublearea(self.v, self.f) / 2.0
+        self.va = np_array([np_sum(self.fa[_vta[0][_vta1[vi]:_vta1[vi+1]]]) / 3 for vi in np_arange(len(self.v))])
     
     '''
         Graph stuff
     '''
 
     def setGraph(self, mode=DEFAULT_NEIGHBOURHOOD_MODE):
+        old_y = None
+        if hasattr(self, 'g') and hasattr(self.g, 'y'):
+            old_y = self.g.y
         self.g = self.toGraph(mode=mode)
+        self.g.y = old_y
         self.graph_vertices_match = True
 
     def toNodes(self):
@@ -148,7 +181,11 @@ class Mesh(Pointcloud):
     '''
 
     def setGraph(self):
+        old_y = None
+        if hasattr(self, 'g') and hasattr(self.g, 'y'):
+            old_y = self.g.y
         self.g = self.toGraph()
+        self.g.y = old_y
         self.graph_vertices_match = True
 
     def toNodes(self):
@@ -161,9 +198,6 @@ class Mesh(Pointcloud):
     
     def toGraph(self):
         return pyg_data_Data(edge_index=self.toEdges(), pos=self.toNodes())
-    
-    def toNodeFeatures(self):
-        pass
 
 class HelperFunctions:
 

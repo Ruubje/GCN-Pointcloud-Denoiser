@@ -27,8 +27,9 @@ def visualize(vs, es):
 
     plot.add_lines(starts, ends)
 
-def visualize_coloring(v, c):
-    a = np_zeros(len(v), dtype=int)
+def visualize_coloring(v, c, f=None):
+    mode = f is None
+    a = np_zeros(len(v) if mode else len(f), dtype=int)
     for i, ci in enumerate(c):
         a[ci] = i + 1
-    mp_plot(v, c=a)
+    mp_plot(v, f=f, c=a)
