@@ -1,10 +1,35 @@
-from .Object import Mesh, Pointcloud, HelperFunctions
+from .Object import \
+    Mesh,\
+    Pointcloud,\
+    HelperFunctions
 
-from numpy import arange as np_arange, argsort as np_argsort, array as np_array, average as np_average, cross as np_cross, exp as np_exp, max as np_max, sum as np_sum, transpose as np_transpose
-from numpy.linalg import det as np_linalg_det, eigh as np_linalg_eigh, norm as np_linalg_norm
-from sklearn.preprocessing import normalize as sklearn_preprocessing_normalize
-from torch import argwhere as torch_argwhere, cat as torch_cat, isin as torch_isin, logical_and as torch_logical_and, unique as torch_unique
-from torch_geometric.utils import subgraph as torch_geometric_utils_subgraph
+from numpy import \
+    arange as np_arange,\
+    argmax as np_argmax,\
+    argsort as np_argsort,\
+    array as np_array,\
+    average as np_average,\
+    cross as np_cross,\
+    einsum as np_einsum,\
+    exp as np_exp,\
+    logical_and as np_logical_and,\
+    max as np_max,\
+    sum as np_sum,\
+    transpose as np_transpose,\
+    zeros as np_zeros
+from numpy.linalg import \
+    det as np_linalg_det,\
+    eigh as np_linalg_eigh,\
+    norm as np_linalg_norm
+from sklearn.preprocessing import \
+    normalize as sklearn_preprocessing_normalize
+from torch import \
+    cat as torch_cat,\
+    isin as torch_isin,\
+    logical_and as torch_logical_and,\
+    unique as torch_unique
+from itertools import \
+    zip_longest as itertools_zip_longest
 
 class PatchGenerator:
     
@@ -80,50 +105,60 @@ class PatchGenerator:
             self.nodes = nodes
             self.mode = mode
             return nodes
-        
+    
     def alignPatchIndices(self, indices):
-        # This sigma should be changed in the future maybe! This is the best guess for what sigma should be currently..
-        # Proof has been found in the code that sigma should indeed be a third!
-        # Since sigma will only be used at one place, where it is used as a denominator, the inverse of sigma is stored.
         SIGMA_1 = 3
         _object = self.object
+
+        # https://stackoverflow.com/questions/38619143/convert-python-sequence-to-numpy-array-filling-missing-values
+        indices_2d = np_array(list(itertools_zip_longest(*indices, fillvalue=-1))).T
+        mask = indices_2d == -1 # Detect mask
+        patch_sizes = np_argmax(mask, axis=-1)
+        indices_2d[mask] = 0 # Set mask to center node to not throw errors
+        N, P = indices_2d.shape
         # (N, 3)
         bcs = _object.g.pos.numpy()
         # (N, 3)
         ci = bcs
-        # (N, 64, 3)
-        cj = bcs[indices]
-        # (N, 64, 3)
+        # (N, P, 3)
+        cj = bcs[indices_2d]
+        # (N, P, 3)
         cjci = cj - ci[:, None, :]
+        temp_norms = np_linalg_norm(cjci, axis=2)
+        temp_norms[mask] = 0
         # (N,)
-        scale_factors = 1 / np_max(np_linalg_norm(cjci, axis=2), axis=1)
-        # (N, 64, 3) (Translated and scaled)
+        scale_factors = 1 / np_max(temp_norms, axis=1)
+        # (N, P, 3) (Translated and scaled)
         dcs = cjci * scale_factors[:, None, None]
         # (N, 3)
         n = _object.fn if isinstance(_object, Mesh) else _object.vn
-        # (N, 64, 3)
-        nj = n[indices]
-        # (N, 64, 3)
+        # (N, P, 3)
+        nj = n[indices_2d]
+        # (N, P, 3)
         wj = np_cross(np_cross(dcs, nj, axis=2), dcs).reshape(-1, 3) # Reshape is done for normalize method to work
         sklearn_preprocessing_normalize(wj, copy=False) # Normalize wj in place
-        wj = wj.reshape(-1, 64, 3)
-        # (N, 64, 3)
+        wj = wj.reshape(-1, P, 3)
+        # (N, P, 3)
         njprime = 2 * np_sum(nj * wj, axis=2)[:, :, None] * wj - nj
         # Big problem. Pointclouds don't have areas. What do we do about this?!?!
         # Reasoning: If the area of the normal vector is small, is doesn't influence the final voting tensor.
         # Should we use neighbourhood density to have a scaling factor or not?
-        # (N, 64)
-        areas = (_object.fa if isinstance(_object, Mesh) else _object.va)[indices] * scale_factors[:, None] ** 2
+        # (N, P)
+        areas = (_object.fa if isinstance(_object, Mesh) else _object.va)[indices_2d] * scale_factors[:, None] ** 2
+        temp_areas = areas
+        temp_areas[mask] = 0
         # (N,)
         maxArea = np_max(areas, axis=1)
-        # (N, 64)
+        # (N, P)
         ddcs = np_linalg_norm(dcs, axis=2)
-        # (N, 64)
+        # (N, P)
         muj = (areas / maxArea[:, None])*np_exp(-ddcs*SIGMA_1)
-        # (N, 64, 3, 3)
+        # (N, P, 3, 3)
         outer = njprime[..., None] * njprime[..., None, :]
-        # (N, 64, 3, 3)
+        # (N, P, 3, 3)
         Tj = muj[..., None, None] * outer
+        # Before summing, set the nonsense values to zero!
+        Tj[mask] = 0
         # (N, 3, 3)
         Ti = np_sum(Tj, axis=1)
         # ((N, 3), (N, 3, 3))
@@ -133,17 +168,30 @@ class PatchGenerator:
         # (N, 3, 3)
         eigh_T = np_transpose(eigh[1], axes=(0, 2, 1))
         # (N, 3, 3)
-        matrix = eigh_T[np_arange(ev_order.shape[0])[:, None, None], ev_order[..., None], np_arange(3)[None, None]]
+        R = eigh_T[np_arange(N)[:, None, None], ev_order[..., None], np_arange(3)[None, None]]
         # (N,)
-        mask = np_sum(matrix[:, 0, :] * n, axis=1) < 0
-        matrix[mask, 0] *= -1
+        R[np_sum(R[:, 0, :] * n, axis=1) < 0] *= -1
         # (N,)
-        mask_2 = np_linalg_det(matrix) < 0
-        matrix[mask_2, 2] *= -1
+        R[np_linalg_det(R) < 0, 2] *= -1
+        # (N, 3, 3)
+        R_inv = np_transpose(R, axes=(0, 2, 1))
+
         '''
             Use matrix to rotate and to find characteristics of patch.
         '''
-        # Get nodes indices to select
-        # Calculate Normal Voting Tensors
-        # Rotate all subgraphs with respective Normal Voting Tensors
-        # IN WHAT ORDER DO I DO THINGS WTFFFFFFFFFFFFFFFFFF
+
+        dcs_R_inv = np_einsum("npi,nij->npj", dcs, R_inv)
+        nj_R_inv = np_einsum("npi,nij->npj", nj, R_inv)
+        gt = _object.g.y.numpy()
+        gt_R_inv = np_einsum("ni,nij->nj", gt, R_inv)
+
+        ev_f = eigh[0][np_arange(N)[:, None], ev_order]
+        flat = np_logical_and(ev_f[:, 1] < 0.01, ev_f[:, 2] < 0.001)
+        edge = np_logical_and(ev_f[:, 1] > 0.01, ev_f[:, 2] < 0.1)
+        corner = ev_f[:, 2] > 0.1
+        char = np_zeros(N)
+        char[flat] = 1
+        char[edge] = 2
+        char[corner] = 3
+
+        return R_inv, dcs_R_inv, nj_R_inv, gt_R_inv, char
