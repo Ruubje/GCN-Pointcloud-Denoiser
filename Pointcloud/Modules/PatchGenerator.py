@@ -14,6 +14,8 @@ from numpy import \
     exp as np_exp,\
     logical_and as np_logical_and,\
     max as np_max,\
+    ndarray as np_ndarray,\
+    sort as np_sort,\
     sum as np_sum,\
     transpose as np_transpose,\
     zeros as np_zeros
@@ -24,20 +26,29 @@ from numpy.linalg import \
 from sklearn.preprocessing import \
     normalize as sklearn_preprocessing_normalize
 from torch import \
+    arange as torch_arange,\
+    bool as torch_bool,\
     cat as torch_cat,\
     isin as torch_isin,\
     logical_and as torch_logical_and,\
-    unique as torch_unique
+    unique as torch_unique,\
+    zeros as torch_zeros
 from itertools import \
     zip_longest as itertools_zip_longest
 
 class PatchGenerator:
+
+    DEFAULT_PATCH_RESOLUTION_K = 8
     
     def __init__(self, object):
         if not isinstance(object, Pointcloud):
             raise ValueError(f"A Patch Generator expects a Pytorch Geometric Data object from which it can create patches.")
 
         self.object = object
+
+    '''
+        Patch Selection
+    '''
 
     def getTwoRing(self, i):
         _edge_index = self.object.g.edge_index
@@ -47,18 +58,20 @@ class PatchGenerator:
         neighbors2 = _edge_index[1][l].view(-1)
         return torch_unique(torch_cat((neighbors, neighbors2)))
 
-    def getRadius(self, tworing):
+    def getRadius(self, tworing, k=DEFAULT_PATCH_RESOLUTION_K):
         _object = self.object
-        _g = _object.g
-        _edge_index = _g.edge_index
-        k = 8
         if isinstance(_object, Mesh):
             a = np_average(_object.fa[tworing])
             radius = k*a**0.5
         else:
-            m = torch_logical_and(torch_isin(_edge_index[0], tworing), torch_isin(_edge_index[1], tworing))
-            n = np_average(np_linalg_norm((_g.pos[_edge_index[1][m]] - _g.pos[_edge_index[0][m]]).numpy(), axis=1))
-            radius = k*n
+            a = np_average(_object.va[tworing])
+            radius = k*a**0.5
+            # _g = _object.g
+            # _edge_index = _g.edge_index
+            # Code that calculates the average distance to neighbours and calculates a radius from that metric.
+            # m = torch_logical_and(torch_isin(_edge_index[0], tworing), torch_isin(_edge_index[1], tworing))
+            # n = np_average(np_linalg_norm((_g.pos[_edge_index[1][m]] - _g.pos[_edge_index[0][m]]).numpy(), axis=1))
+            # radius = k*n
         return radius
 
     def getNodes(self, neighbours):
@@ -73,12 +86,19 @@ class PatchGenerator:
             return ts
         else:
             return neighbours
+        
+    def toMasked2DArray(self, indices):
+        # https://stackoverflow.com/questions/38619143/convert-python-sequence-to-numpy-array-filling-missing-values
+        indices_2d = np_array(list(itertools_zip_longest(*indices, fillvalue=-1))).T
+        mask = indices_2d == -1 # Detect mask
+        indices_2d[mask] = 0 # Set mask to center node to not throw errors
+        return indices_2d, mask
     
     # Collecting patches from the object.
     # mode is 0 or 1.
     #   - 0 represents the method from the original paper and;
     #   - 1 represents a new sped up version.
-    def toPatchIndices(self, mode=0):
+    def toPatchIndices(self, mode=0, k=DEFAULT_PATCH_RESOLUTION_K):
         _object = self.object
         _g = _object.g
         _pos = _g.pos
@@ -87,34 +107,31 @@ class PatchGenerator:
             tworings = [self.getTwoRing(i) for i in range(_pos.size(0))]
             print("Collected Tworings: Collecting radii")
             # Calculate ball radii
-            radii = [self.getRadius(tr) for tr in tworings]
+            radii = [self.getRadius(tr, k) for tr in tworings]
             print("Collected radii: Collecting nearby vertices")
             # Select points in ball
             nearby_vertices = np_array(_object.kdtree.query_ball_point(_pos, radii))
             print("Collected nearby vertices: Collecting nodes from vertices.")
             # Get graph nodes from vertices in range
             nodes = [self.getNodes(np_array(neighbours)) for neighbours in nearby_vertices]
-            self.nodes = nodes
-            self.mode = mode
-            return nodes
+            nodes, mask = self.toMasked2DArray(nodes)
+            return nodes, mask
         elif mode == 1:
             print("Collecting nearby vertices")
             _, nearby_vertices = _object.kdtree.query(_pos, k=64, workers=-1)
             print("Collecting nodes")
             nodes = [self.getNodes(np_array(neighbours)) for neighbours in nearby_vertices]
-            self.nodes = nodes
-            self.mode = mode
-            return nodes
+            nodes, mask = self.toMasked2DArray(nodes)
+            return nodes, mask
     
-    def alignPatchIndices(self, indices):
+    '''
+        Patch Alignment
+    '''
+
+    def alignPatchIndices(self, indices_2d, mask):
         SIGMA_1 = 3
         _object = self.object
 
-        # https://stackoverflow.com/questions/38619143/convert-python-sequence-to-numpy-array-filling-missing-values
-        indices_2d = np_array(list(itertools_zip_longest(*indices, fillvalue=-1))).T
-        mask = indices_2d == -1 # Detect mask
-        patch_sizes = np_argmax(mask, axis=-1)
-        indices_2d[mask] = 0 # Set mask to center node to not throw errors
         N, P = indices_2d.shape
         # (N, 3)
         bcs = _object.g.pos.numpy()
@@ -185,7 +202,16 @@ class PatchGenerator:
         gt = _object.g.y.numpy()
         gt_R_inv = np_einsum("ni,nij->nj", gt, R_inv)
 
-        ev_f = eigh[0][np_arange(N)[:, None], ev_order]
+        return bcs, scale_factors, R_inv, dcs_R_inv, nj_R_inv, gt_R_inv, eigh
+
+    '''
+        Calculate characteristics per patch.
+    '''
+
+    @classmethod
+    def characteristics(cls, ev):
+        N = ev.shape[0]
+        ev_f = np_sort(ev, axis=1)[:, ::-1]
         flat = np_logical_and(ev_f[:, 1] < 0.01, ev_f[:, 2] < 0.001)
         edge = np_logical_and(ev_f[:, 1] > 0.01, ev_f[:, 2] < 0.1)
         corner = ev_f[:, 2] > 0.1
@@ -193,5 +219,4 @@ class PatchGenerator:
         char[flat] = 1
         char[edge] = 2
         char[corner] = 3
-
-        return R_inv, dcs_R_inv, nj_R_inv, gt_R_inv, char
+        return char
