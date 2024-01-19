@@ -113,6 +113,12 @@ class Pointcloud(Object):
         self.fa = igl_doublearea(self.v, self.f) / 2.0
         self.va = np_array([np_sum(self.fa[_vta[0][_vta1[vi]:_vta1[vi+1]]]) / 3 for vi in np_arange(len(self.v))])
     
+    def getNormals(self):
+        return self.vn
+
+    def getAreas(self):
+        return self.va
+    
     '''
         Graph stuff
     '''
@@ -175,6 +181,12 @@ class Mesh(Pointcloud):
         super().setVertices(v, calculate_meta=False)
         if calculate_meta:
             self.toGraph()
+
+    def getNormals(self):
+        return self.fn
+    
+    def getAreas(self):
+        return self.fa
 
     '''
         Graph stuff

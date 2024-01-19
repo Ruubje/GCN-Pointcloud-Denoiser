@@ -29,10 +29,17 @@ from torch import \
     arange as torch_arange,\
     bool as torch_bool,\
     cat as torch_cat,\
+    from_numpy as torch_from_numpy,\
+    int64 as torch_int64,\
     isin as torch_isin,\
     logical_and as torch_logical_and,\
     unique as torch_unique,\
     zeros as torch_zeros
+from torch_geometric.data import \
+    Data as pyg_data_Data
+from torch_geometric.utils import \
+    degree as pyg_utils_degree,\
+    subgraph as pyg_utils_subgraph
 from itertools import \
     zip_longest as itertools_zip_longest
 
@@ -60,12 +67,8 @@ class PatchGenerator:
 
     def getRadius(self, tworing, k=DEFAULT_PATCH_RESOLUTION_K):
         _object = self.object
-        if isinstance(_object, Mesh):
-            a = np_average(_object.fa[tworing])
-            radius = k*a**0.5
-        else:
-            a = np_average(_object.va[tworing])
-            radius = k*a**0.5
+        a = np_average(_object.getAreas()[tworing])
+        radius = k*a**0.5
             # _g = _object.g
             # _edge_index = _g.edge_index
             # Code that calculates the average distance to neighbours and calculates a radius from that metric.
@@ -128,17 +131,15 @@ class PatchGenerator:
         Patch Alignment
     '''
 
-    def alignPatchIndices(self, indices_2d, mask):
+    def getEigh(self, indices_2d, mask):
         SIGMA_1 = 3
         _object = self.object
 
-        N, P = indices_2d.shape
+        P = indices_2d.shape[1]
         # (N, 3)
-        bcs = _object.g.pos.numpy()
-        # (N, 3)
-        ci = bcs
+        ci = _object.g.pos.numpy()
         # (N, P, 3)
-        cj = bcs[indices_2d]
+        cj = ci[indices_2d]
         # (N, P, 3)
         cjci = cj - ci[:, None, :]
         temp_norms = np_linalg_norm(cjci, axis=2)
@@ -148,7 +149,7 @@ class PatchGenerator:
         # (N, P, 3) (Translated and scaled)
         dcs = cjci * scale_factors[:, None, None]
         # (N, 3)
-        n = _object.fn if isinstance(_object, Mesh) else _object.vn
+        n = _object.getNormals()
         # (N, P, 3)
         nj = n[indices_2d]
         # (N, P, 3)
@@ -161,9 +162,9 @@ class PatchGenerator:
         # Reasoning: If the area of the normal vector is small, is doesn't influence the final voting tensor.
         # Should we use neighbourhood density to have a scaling factor or not?
         # (N, P)
-        areas = (_object.fa if isinstance(_object, Mesh) else _object.va)[indices_2d] * scale_factors[:, None] ** 2
-        temp_areas = areas
-        temp_areas[mask] = 0
+        areas = _object.getAreas()[indices_2d] * scale_factors[:, None] ** 2
+        print(areas.shape)
+        areas[mask] = 0
         # (N,)
         maxArea = np_max(areas, axis=1)
         # (N, P)
@@ -180,6 +181,26 @@ class PatchGenerator:
         Ti = np_sum(Tj, axis=1)
         # ((N, 3), (N, 3, 3))
         eigh = np_linalg_eigh(Ti)
+        return ci, scale_factors, eigh
+    
+    @classmethod
+    def getGroups(cls, ev):
+        N = ev.shape[0]
+        ev_f = np_sort(ev, axis=1)[:, ::-1]
+        flat = np_logical_and(ev_f[:, 1] < 0.01, ev_f[:, 2] < 0.001)
+        edge = np_logical_and(ev_f[:, 1] > 0.01, ev_f[:, 2] < 0.1)
+        corner = ev_f[:, 2] > 0.1
+        char = np_zeros(N)
+        char[flat] = 1
+        char[edge] = 2
+        char[corner] = 3
+        return char
+    
+    def getRInv(self, eigh):
+        N = eigh[0].shape[0]
+        _object = self.object
+        # (N, 3)
+        n = _object.getNormals()
         # (N, 3)
         ev_order = np_argsort(eigh[0], axis=1)[:, ::-1]
         # (N, 3, 3)
@@ -191,32 +212,32 @@ class PatchGenerator:
         # (N,)
         R[np_linalg_det(R) < 0, 2] *= -1
         # (N, 3, 3)
-        R_inv = np_transpose(R, axes=(0, 2, 1))
-
-        '''
-            Use matrix to rotate and to find characteristics of patch.
-        '''
-
-        dcs_R_inv = np_einsum("npi,nij->npj", dcs, R_inv)
-        nj_R_inv = np_einsum("npi,nij->npj", nj, R_inv)
-        gt = _object.g.y.numpy()
-        gt_R_inv = np_einsum("ni,nij->nj", gt, R_inv)
-
-        return bcs, scale_factors, R_inv, dcs_R_inv, nj_R_inv, gt_R_inv, eigh
-
-    '''
-        Calculate characteristics per patch.
-    '''
+        R_inv = np_transpose(R, axes = (0, 2, 1))
+        return R_inv
 
     @classmethod
-    def characteristics(cls, ev):
-        N = ev.shape[0]
-        ev_f = np_sort(ev, axis=1)[:, ::-1]
-        flat = np_logical_and(ev_f[:, 1] < 0.01, ev_f[:, 2] < 0.001)
-        edge = np_logical_and(ev_f[:, 1] > 0.01, ev_f[:, 2] < 0.1)
-        corner = ev_f[:, 2] > 0.1
-        char = np_zeros(N)
-        char[flat] = 1
-        char[edge] = 2
-        char[corner] = 3
-        return char
+    def applyRInv(cls, R_inv, other):
+        R_inv_shape = R_inv.shape
+        other_shape = other.shape
+        len_other_shape = len(other_shape)
+        if len(R_inv_shape) == 3 and R_inv_shape[0] == other_shape[0]:
+            if len_other_shape == 2:
+                return np_einsum(np_einsum("ni,nij->nj", other, R_inv))
+            elif len_other_shape == 3:
+                return np_einsum("npi,nij->npj", other, R_inv)
+        else:
+            raise ValueError(f"Input arrays were not of the correct shape:\nR_inv shape: {R_inv_shape}\nOther shape: {other_shape}")
+    
+    def getGraph(self, index, neighbourhood, alignment):
+        p = neighbourhood[index]
+        _object = self.object
+        _g = _object.g
+        nj_R_inv = self.applyRInv(alignment[2], _object.getNormals())
+        c = _g.pos[p]
+        n = torch_from_numpy(nj_R_inv[i])
+        a = torch_from_numpy(_object.getAreas()[p] * S[i])[:, None]
+        d = pyg_utils_degree(_g.edge_index[0].to(torch_int64))[p, None]
+        x = torch_cat((c, n, a, d), dim=1)
+        edge_index = pyg_utils_subgraph(torch_from_numpy(p), _g.edge_index)[0]
+        y = gt_R_inv[i]
+        data = pyg_data_Data(x=x, edge_index=edge_index, y=y)
