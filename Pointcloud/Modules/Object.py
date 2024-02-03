@@ -31,7 +31,7 @@ from torch import arange as torch_arange,\
     from_numpy as torch_from_numpy,\
     long as torch_long,\
     stack as torch_stack
-from torch_geometric.data import Data as pyg_data_Data
+from torch_geometric.data import Data as tg_data_Data
 from warnings import warn
 
 '''
@@ -145,12 +145,12 @@ class Pointcloud(Object):
         elif mode == 1:
             L, _ = point_cloud_laplacian(self.v)
             Lcoo = L.tocoo()
-            return torch_from_numpy(np_vstack((Lcoo.row, Lcoo.col)))
+            return torch_from_numpy(np_vstack((Lcoo.row, Lcoo.col))).long()
         else:
             raise ValueError(f"mode {mode} is undefined within this method.")
     
     def toGraph(self, mode=DEFAULT_NEIGHBOURHOOD_MODE):
-        return pyg_data_Data(edge_index=self.toEdges(mode=mode), pos=self.toNodes())
+        return tg_data_Data(edge_index=self.toEdges(mode=mode), pos=self.toNodes(), n=torch_from_numpy(self.getNormals()), a=torch_from_numpy(self.getAreas()))
 
 class Mesh(Pointcloud):
 
@@ -206,10 +206,10 @@ class Mesh(Pointcloud):
     def toEdges(self):
         num_f = self.f.shape[0]
         tta = igl_triangle_triangle_adjacency(self.f)[0]
-        return torch_from_numpy(np_c_[np_repeat(np_arange(num_f)[:, None], 3, axis=1).flatten(), tta.flatten()].T)
+        return torch_from_numpy(np_c_[np_repeat(np_arange(num_f)[:, None], 3, axis=1).flatten(), tta.flatten()].T).long()
     
     def toGraph(self):
-        return pyg_data_Data(edge_index=self.toEdges(), pos=self.toNodes())
+        return tg_data_Data(edge_index=self.toEdges(), pos=self.toNodes(), n=torch_from_numpy(self.getNormals()), a=torch_from_numpy(self.getAreas()))
 
 class HelperFunctions:
 
@@ -252,7 +252,7 @@ class HelperFunctions:
         col = torch_from_numpy(output).to(torch_long)
         k = col.size(1)
         row = torch_arange(col.size(0), dtype=torch_long).view(-1, 1).repeat(1, k)
-        return torch_stack([row.reshape(-1), col.reshape(-1)], dim=0)
+        return torch_stack([row.reshape(-1), col.reshape(-1)], dim=0).long()
     
     '''
         DEPRECATED DEFINITIONS

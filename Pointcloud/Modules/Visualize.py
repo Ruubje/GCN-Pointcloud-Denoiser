@@ -32,4 +32,4 @@ def visualize_coloring(v, c, f=None):
     a = np_zeros(len(v) if mode else len(f), dtype=int)
     for i, ci in enumerate(c):
         a[ci] = i + 1
-    mp_plot(v, f=f, c=a)
+    return mp_plot(v, f=f, c=a)

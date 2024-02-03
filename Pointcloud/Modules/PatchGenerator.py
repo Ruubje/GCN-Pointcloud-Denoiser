@@ -3,6 +3,7 @@ from .Object import \
     Pointcloud,\
     HelperFunctions
 
+from numba import jit
 from numpy import \
     arange as np_arange,\
     argmax as np_argmax,\
@@ -29,11 +30,11 @@ from torch import \
     arange as torch_arange,\
     bool as torch_bool,\
     cat as torch_cat,\
+    div as torch_div,\
+    eye as torch_eye,\
     from_numpy as torch_from_numpy,\
     int64 as torch_int64,\
-    isin as torch_isin,\
-    logical_and as torch_logical_and,\
-    unique as torch_unique,\
+    Tensor as torch_Tensor,\
     zeros as torch_zeros
 from torch_geometric.data import \
     Data as pyg_data_Data
@@ -42,6 +43,32 @@ from torch_geometric.utils import \
     subgraph as pyg_utils_subgraph
 from itertools import \
     zip_longest as itertools_zip_longest
+
+# @jit(nopython=True)
+# def getJITTwoRing(i, _edge_index):
+#     nodes = set(i)
+#     for _ in range(2):
+#         start = _edge_index[0]
+#         end = _edge_index[1]
+#         new_nodes = set()
+#         for k in range(start.shape[0]):
+#             if start[k] in nodes:
+#                 new_nodes.add(end[k])
+#         nodes = nodes.union(new_nodes)
+#     return torch_Tensor(list(nodes))
+
+@jit(nopython=True)
+def getJITTwoRing(i, _edge_index):
+    nodes = [i]
+    for _ in range(2):
+        start = _edge_index[0]
+        end = _edge_index[1]
+        new_nodes = []
+        for k in range(start.shape[0]):
+            if start[k] in nodes:
+                new_nodes.append(end[k])
+        nodes = nodes.append(new_nodes)
+    return torch_Tensor(list(set(nodes)))
 
 class PatchGenerator:
 
@@ -57,13 +84,44 @@ class PatchGenerator:
         Patch Selection
     '''
 
-    def getTwoRing(self, i):
-        _edge_index = self.object.g.edge_index
-        j = torch_isin(_edge_index[0], i)
-        neighbors = _edge_index[1][j].view(-1)
-        l = torch_isin(_edge_index[0], neighbors)
-        neighbors2 = _edge_index[1][l].view(-1)
-        return torch_unique(torch_cat((neighbors, neighbors2)))
+    def getJITTwoRings(self):
+        N = self.object.g.pos.size(0)
+        _edge_index = self.object.g.edge_index.numpy()
+        return [self.getJITTwoRing(i, _edge_index) for i in range(N)]
+    
+    def getTwoRing(self, i, _edge_index, N):
+        node_mask = torch_zeros(N, dtype=bool)
+        node_mask[i] = True
+        edge_mask = node_mask[_edge_index[0]]
+        node_mask[_edge_index[1, edge_mask]] = True
+        edge_mask = node_mask[_edge_index[0]]
+        node_mask[_edge_index[1, edge_mask]] = True
+        return node_mask.nonzero()
+    
+    def getVectorizedKRing(self, k):
+        ROUNDING_MODE = "floor"
+        _g = self.object.g
+        start, end = _g.edge_index
+        N = _g.pos.size(0)
+        E = start.size(0)
+        nodes_mask = torch_eye(N, dtype=bool)
+        for _ in range(k):
+            _temp_edges = nodes_mask[:, start].view(-1)
+            _temp_num_edges = _temp_edges.nonzero().view(-1)
+            _temp_indices = end[_temp_num_edges % E] + N * torch_div(_temp_num_edges, E, rounding_mode=ROUNDING_MODE)
+            nodes_mask[_temp_indices % N, torch_div(_temp_indices, N, rounding_mode=ROUNDING_MODE)] = True
+        return nodes_mask
+        
+    def getTwoRings(self):
+        try:
+            # return self.getJITTwoRings()
+            result = self.getVectorizedKRing(2)
+            return [result[i].nonzero() for i in range(result.size(0))]
+        except:
+            _g = self.object.g
+            _edge_index = _g.edge_index
+            N = _g.pos.size(0)
+            return [self.getTwoRing(i, _edge_index, N) for i in range(N)]
 
     def getRadius(self, tworing, k=DEFAULT_PATCH_RESOLUTION_K):
         _object = self.object
@@ -94,7 +152,7 @@ class PatchGenerator:
         # https://stackoverflow.com/questions/38619143/convert-python-sequence-to-numpy-array-filling-missing-values
         indices_2d = np_array(list(itertools_zip_longest(*indices, fillvalue=-1))).T
         mask = indices_2d == -1 # Detect mask
-        indices_2d[mask] = 0 # Set mask to center node to not throw errors
+        indices_2d[mask] = 0 # Set mask to center node to not throw errors while indexing
         return indices_2d, mask
     
     # Collecting patches from the object.
@@ -107,7 +165,8 @@ class PatchGenerator:
         _pos = _g.pos
         if mode == 0:
             print("Started collecting patches: Collecting Tworings")
-            tworings = [self.getTwoRing(i) for i in range(_pos.size(0))]
+            # tworings = [self.getTwoRing(i) for i in range(_pos.size(0))]
+            tworings = self.getTwoRings()
             print("Collected Tworings: Collecting radii")
             # Calculate ball radii
             radii = [self.getRadius(tr, k) for tr in tworings]
@@ -133,11 +192,11 @@ class PatchGenerator:
 
     def getEigh(self, indices_2d, mask):
         SIGMA_1 = 3
-        _object = self.object
+        _g = self.object.g
 
         P = indices_2d.shape[1]
         # (N, 3)
-        ci = _object.g.pos.numpy()
+        ci = _g.pos.numpy()
         # (N, P, 3)
         cj = ci[indices_2d]
         # (N, P, 3)
@@ -149,7 +208,7 @@ class PatchGenerator:
         # (N, P, 3) (Translated and scaled)
         dcs = cjci * scale_factors[:, None, None]
         # (N, 3)
-        n = _object.getNormals()
+        n = _g.n.numpy()
         # (N, P, 3)
         nj = n[indices_2d]
         # (N, P, 3)
@@ -162,8 +221,7 @@ class PatchGenerator:
         # Reasoning: If the area of the normal vector is small, is doesn't influence the final voting tensor.
         # Should we use neighbourhood density to have a scaling factor or not?
         # (N, P)
-        areas = _object.getAreas()[indices_2d] * scale_factors[:, None] ** 2
-        print(areas.shape)
+        areas = _g.a.numpy()[indices_2d] * scale_factors[:, None] ** 2
         areas[mask] = 0
         # (N,)
         maxArea = np_max(areas, axis=1)
@@ -198,9 +256,9 @@ class PatchGenerator:
     
     def getRInv(self, eigh):
         N = eigh[0].shape[0]
-        _object = self.object
+        _g = self.object.g
         # (N, 3)
-        n = _object.getNormals()
+        n = _g.n.numpy()
         # (N, 3)
         ev_order = np_argsort(eigh[0], axis=1)[:, ::-1]
         # (N, 3, 3)
@@ -222,7 +280,7 @@ class PatchGenerator:
         len_other_shape = len(other_shape)
         if len(R_inv_shape) == 3 and R_inv_shape[0] == other_shape[0]:
             if len_other_shape == 2:
-                return np_einsum(np_einsum("ni,nij->nj", other, R_inv))
+                return np_einsum("ni,nij->nj", other, R_inv)
             elif len_other_shape == 3:
                 return np_einsum("npi,nij->npj", other, R_inv)
         else:
@@ -241,3 +299,4 @@ class PatchGenerator:
         edge_index = pyg_utils_subgraph(torch_from_numpy(p), _g.edge_index)[0]
         y = gt_R_inv[i]
         data = pyg_data_Data(x=x, edge_index=edge_index, y=y)
+        return data
